@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="UTF-8">
+    <title>Fortel</title>
+    <link rel="stylesheet" href="static/css/main.css">
+    <!-- Boxiocns CDN Link -->
+    <link href='https://unpkg.com/boxicons@2.0.7/css/boxicons.min.css' rel='stylesheet'>
+     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+   </head>
+<body>
+  <div class="sidebar close">
+    <div class="logo-details">
+        <i class='bx bx-analyse' onclick="window.location = '/';" ></i> 
+      <span class="logo_name">Fortel</span>
+    </div>
+    <ul class="nav-links">
+      <li>
+        <div class="iocn-link">
+          <a href="#">
+            <i class='bx bx-brain' ></i>
+            <span class="link_name">Models</span>
+          </a>
+          <i class='bx bxs-chevron-down arrow' ></i>
+        </div>
+        <ul class="sub-menu">
+          <li><a class="link_name" href="#">Models</a></li>
+          <i class='bx bx-coin-stack' ></i>
+          <li><a href="/lstm">LSTM Model</a></li>
+          <i class='bx bx-network-chart'></i>
+          <li><a href="/gru">GRU Model</a></li>
+        </ul>
+      </li>
+      <li>
+        <div class="iocn-link">
+          <a href="#">
+            <i class='bx bx-book-content' ></i>
+            <span class="link_name xr ">Docs</span>
+          </a>
+          <i class='bx bxs-chevron-down arrow' ></i>
+        </div>
+        <ul class="sub-menu">
+          <li><a class="link_name" href="#">Docs</a></li>
+          <i class=' bx bx-file' ></i>
+          <li><a href="/paper">Paper</a></li>
+          <i class=' bx bx-folder-open' ></i>
+          <li><a href="/report">Report</a></li>
+        </ul>
+      </li>
+      <li>
+        <div class="iocn-link">
+          <a href="#">
+            <i class=' bx bx-link' ></i>
+            <span class="link_name">Links</span>
+          </a>
+          <i class='bx bxs-chevron-down arrow' ></i>
+        </div>
+        <ul class="sub-menu">
+          <li><a class="link_name" href="#">Links</a></li>
+          <i class='bx bxl-github' ></i>
+          <li><a href="https://github.com/rohan2800">GitHub</a></li>
+          <i class='bx bx-mail-send' ></i>
+          <li><a href="mailto:rohanwaghmare011@gmail.com">Email</a></li>
+        </ul>
+      </li>
+      <li>
+        <div class="iocn-link">
+          <a href="#">
+            <i class=' bx bx-ghost' ></i>
+            <span class="link_name">Team</span>
+          </a>
+          <i class='bx bxs-chevron-down arrow' ></i>
+        </div>
+        <ul class="sub-menu">
+          <li><a class="link_name" href="#">Team</a></li>
+          <li><a href="/Certificate/rohan">MR.ROHAN WAGHMARE</a></li>
+          <li><a href="/Certificate/YK">MR.YASH KASHID</a></li>
+          <li><a href="/Certificate/YD">MR.YASH DAREKAR</a></li>
+          <li><a href="/Certificate/YC">MR.YASH CHOUGULE</a></li>
+          <li><a href="/Certificate/RR">MR.RAHUL ROTE</a></li>
+        </ul>
+      </li>
+</ul>
+  </div>
+  <section class="home-section">
+    <div class="home-content">
+      <i class='bx bx-vector' ></i>
+      <span class="text">STOCK DATA ANALYSIS USING LSTM</span>
+    </div>
+    <div class="dropdown-container">
+      <form action="/lstm" method="POST" class="dropdown-container" enctype="multipart/form-data">
+        <select class="dropdown" name="options">
+            {% for option in options %}
+            <option value="{{ option }}">{{ option }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="analyze-button">Predict</button>
+    </form>
+  </div>
+  {%if plot%}
+          <div class="image_container">
+              <img src="data:image/png;base64,{{ plot }}" width=1280px >
+      </div>
+ {%endif%}
+</section>
+  <script src="static/js/script.js"></script>
+
+</body>
+</html>
