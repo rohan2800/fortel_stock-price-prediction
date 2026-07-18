@@ -27,7 +27,7 @@ pipeline {
           // Requires Jenkins credentials id 'dockerhub-creds' (username/password)
           withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKERHUB_USER', passwordVariable: 'DOCKERHUB_PASS')]) {
             sh 'echo $DOCKERHUB_PASS | docker login -u $DOCKERHUB_USER --password-stdin'
-            # sh "docker push ${REGISTRY}:${IMAGE_TAG}"
+            sh "docker push ${REGISTRY}:${IMAGE_TAG}"
           }
         }
       }
