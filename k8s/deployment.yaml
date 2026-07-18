@@ -13,16 +13,22 @@ spec:
     metadata:
       labels:
         app: fortel
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5000"
     spec:
       containers:
       - name: fortel
         # Replace image with your registry/image:tag
         image: docker.io/your-docker-username/fortel_stock-price-prediction:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 5000
         env:
         - name: FLASK_ENV
           value: "production"
+        - name: MODEL_URL
+          value: "" # Set to the model storage URL if using external models
         resources:
           requests:
             cpu: "100m"
@@ -30,3 +36,20 @@ spec:
           limits:
             cpu: "500m"
             memory: "512Mi"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 5000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 5000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          failureThreshold: 3
+      # Optional imagePullSecrets if using a private registry
+      # imagePullSecrets:
+      # - name: regcred
