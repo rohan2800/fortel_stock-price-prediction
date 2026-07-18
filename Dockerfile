@@ -1,24 +1,47 @@
-# Dockerfile for Fortel Flask app
-FROM python:3.11-slim
+# Multi-stage Dockerfile for Fortel Flask app
 
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
-
+# Builder stage: install build deps and build wheels
+FROM python:3.11-slim AS builder
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 WORKDIR /app
 
-# system deps for any packages that need compilation
-RUN apt-get update && apt-get install -y build-essential --no-install-recommends \
+# Install build-time system deps
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential gcc libffi-dev libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps
+# Copy requirements and build wheels into /wheels
 COPY requirements.txt ./
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --upgrade pip wheel setuptools \
+    && pip wheel --wheel-dir=/wheels -r requirements.txt
 
-# Copy project
+# Runtime stage: smaller image with only runtime deps
+FROM python:3.11-slim AS runtime
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+WORKDIR /app
+
+# Minimal runtime system libraries (keep small)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgcc1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy built wheels from builder and install without rebuilding
+COPY --from=builder /wheels /wheels
+COPY requirements.txt ./
+RUN pip install --no-index --find-links=/wheels -r requirements.txt \
+    && rm -rf /wheels
+
+# Copy the application code (Dockerfile .dockerignore excludes large artifacts)
 COPY . .
 
-# Expose port
+# Create an unprivileged user and fix permissions
+RUN useradd -m appuser \
+    && chown -R appuser /app
+USER appuser
+
 EXPOSE 5000
 
 # Use gunicorn for production-like server
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app", "--workers", "4"]
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app", "--workers", "2"]
