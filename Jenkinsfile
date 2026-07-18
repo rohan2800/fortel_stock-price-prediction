@@ -2,7 +2,7 @@ pipeline {
   agent any
   environment {
     // Replace with your registry and credentials id in Jenkins
-    REGISTRY = "docker.io/your-docker-username/fortel_stock-price-prediction"
+    REGISTRY = "rohan2044/fortel-app"
     IMAGE_TAG = "${env.BUILD_ID}"
   }
   stages {
