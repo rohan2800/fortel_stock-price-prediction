@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fortel-ingress
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
+spec:
+  rules:
+  - host: fortel.example.com  # <- replace with your domain
+    http:
+      paths:
+      - path: /(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: fortel-service
+            port:
+              number: 80
+  # To enable TLS, add a tls block and a TLS secret with your certs
+  # tls:
+  # - hosts:
+  #   - fortel.example.com
+  #   secretName: fortel-tls
