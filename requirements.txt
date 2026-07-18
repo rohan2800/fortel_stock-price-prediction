@@ -1,9 +1,11 @@
 Flask
+gunicorn
 tensorflow
-pandas
+keras
 numpy
-scikit-learn
+pandas
 matplotlib
 plotly
 kaleido
 yfinance
+scikit-learn
