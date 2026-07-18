@@ -1,0 +1,41 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual env
+venv/
+.venv/
+env/
+
+# Editor directories and files
+.vscode/
+.idea/
+.DS_Store
+
+# Python environment
+pip-wheel-metadata/
+
+# C extensions
+*.so
+
+# Keras / model files (don't copy large pretrained models)
+*.keras
+*.h5
+*.model
+gru_model.keras
+lstm_model.keras
+
+# Static images (generated)
+static/images/
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Logs
+*.log
+
+# Ignore dataset and large CSVs if not needed in image
+StockSymbols.csv
