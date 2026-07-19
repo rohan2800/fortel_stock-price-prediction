@@ -72,6 +72,7 @@ Open `Jenkinsfile` and verify these values:
   - Example: `rohan2044/fortel-app`
 - `IMAGE_TAG` is currently set to `${env.BUILD_ID}`.
 - The pipeline uses Jenkins credential ID `dockerhub-creds`.
+- If you want Jenkins to deploy to Kubernetes, create a `kubeconfig` secret file credential and leave the deploy stage enabled.
 
 If you use a different credential ID, update the `withCredentials(...)` block accordingly.
 
@@ -139,12 +140,14 @@ After adding, use **Recent Deliveries** to verify GitHub sends a `200` response.
    - Scan
    - Test
    - Push
+   - Deploy (if Kubernetes credentials are configured)
 
 ### What the pipeline does
 - Builds a Docker image from `Dockerfile`.
 - Scans the built image with Trivy for HIGH/CRITICAL vulnerabilities.
 - Archives `trivy-report.json`.
 - Pushes the image to Docker Hub.
+- Deploys the image to Kubernetes if the `kubeconfig` credential is available.
 
 ---
 
@@ -176,7 +179,7 @@ kubectl rollout status deployment/fortel-app -n default
 ### Notes
 - Update the image name in `k8s/deployment.yaml` if you push a different tag.
 - The deployment manifest includes health/readiness probe annotations and resource requests.
-- You can also add a Jenkins deploy stage that uses the `kubeconfig` Jenkins secret.
+- Jenkins can apply these manifests automatically if you add a `kubeconfig` Jenkins secret and keep the deploy stage enabled.
 
 ---
 
@@ -186,6 +189,7 @@ kubectl rollout status deployment/fortel-app -n default
 - If the pipeline fails in the `Scan` stage, check the archived `trivy-report.json`.
 - If Docker push fails, verify `dockerhub-creds` and the `REGISTRY` format.
 - If Git checkout fails, verify `github-id` credentials and repo access.
+- If deployment fails, verify your `kubeconfig` credential and that `kubectl` is installed on the Jenkins agent.
 
 ---
 
