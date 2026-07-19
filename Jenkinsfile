@@ -4,6 +4,7 @@ pipeline {
     // Replace with your registry and credentials id in Jenkins
     REGISTRY = "rohan2044/fortel-app"
     IMAGE_TAG = "${env.BUILD_ID}"
+    TRIVY_VERSION = "0.45.0"
   }
   stages {
     stage('Checkout') {
@@ -13,6 +14,18 @@ pipeline {
       steps {
         script {
           dockerImage = docker.build("${REGISTRY}:${IMAGE_TAG}")
+        }
+      }
+    }
+    stage('Scan') {
+      steps {
+        script {
+          sh '''
+            mkdir -p /tmp/trivy
+            curl -sfL https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz | tar xz -C /tmp/trivy
+            chmod +x /tmp/trivy/trivy
+            /tmp/trivy/trivy image --severity HIGH,CRITICAL --exit-code 1 --no-progress ${REGISTRY}:${IMAGE_TAG}
+          '''
         }
       }
     }
