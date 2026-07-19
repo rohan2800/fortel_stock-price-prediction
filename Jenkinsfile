@@ -4,7 +4,7 @@ pipeline {
     // Replace with your registry and credentials id in Jenkins
     REGISTRY = "rohan2044/fortel-app"
     IMAGE_TAG = "${env.BUILD_ID}"
-    TRIVY_VERSION = "0.45.0"
+    TRIVY_VERSION = "0.72.0"
   }
   stages {
     stage('Checkout') {
@@ -22,7 +22,8 @@ pipeline {
         script {
           sh '''
             mkdir -p /tmp/trivy
-            curl -sfL https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz | tar xz -C /tmp/trivy
+            curl -sfL https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz -o /tmp/trivy/trivy.tar.gz
+            tar xzf /tmp/trivy/trivy.tar.gz -C /tmp/trivy
             chmod +x /tmp/trivy/trivy
             /tmp/trivy/trivy image --severity HIGH,CRITICAL --exit-code 1 --no-progress ${REGISTRY}:${IMAGE_TAG}
           '''
