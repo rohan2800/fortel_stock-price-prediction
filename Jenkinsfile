@@ -11,7 +11,7 @@ pipeline {
     IMAGE_TAG = "${env.BUILD_ID}"
     TRIVY_VERSION = "0.72.0"
     KUBE_CONFIG_CREDENTIAL_ID = 'kubeconfig'
-    KUBE_NAMESPACE = 'default'
+    KUBE_NAMESPACE = 'fortel'
   }
   stages {
     stage('Checkout') {
@@ -62,6 +62,7 @@ pipeline {
           withCredentials([file(credentialsId: env.KUBE_CONFIG_CREDENTIAL_ID, variable: 'KUBECONFIG_FILE')]) {
             sh '''
               export KUBECONFIG="$KUBECONFIG_FILE"
+              kubectl apply -f k8s/namespace.yaml
               kubectl apply -f k8s/deployment.yaml -n ${KUBE_NAMESPACE}
               kubectl apply -f k8s/service.yaml -n ${KUBE_NAMESPACE}
               kubectl set image deployment/fortel-app fortel=${REGISTRY}:${IMAGE_TAG} -n ${KUBE_NAMESPACE} --record
