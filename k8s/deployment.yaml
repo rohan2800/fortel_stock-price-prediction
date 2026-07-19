@@ -32,25 +32,27 @@ spec:
           value: "" # Set to the model storage URL if using external models
         resources:
           requests:
-            cpu: "100m"
-            memory: "256Mi"
-          limits:
-            cpu: "500m"
+            cpu: "250m"
             memory: "512Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
         livenessProbe:
           httpGet:
             path: /health
             port: 5000
-          initialDelaySeconds: 15
+          initialDelaySeconds: 90
           periodSeconds: 20
-          failureThreshold: 3
+          timeoutSeconds: 5
+          failureThreshold: 5
         readinessProbe:
           httpGet:
             path: /ready
             port: 5000
-          initialDelaySeconds: 5
+          initialDelaySeconds: 60
           periodSeconds: 10
-          failureThreshold: 3
+          timeoutSeconds: 5 
+          failureThreshold: 6
       # Optional imagePullSecrets if using a private registry
       # imagePullSecrets:
       # - name: regcred
