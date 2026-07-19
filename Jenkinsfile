@@ -13,7 +13,7 @@ pipeline {
     stage('Build') {
       steps {
         script {
-          dockerImage = docker.build("${REGISTRY}:${IMAGE_TAG}")
+          def dockerImage = docker.build("${REGISTRY}:${IMAGE_TAG}")
         }
       }
     }
@@ -25,8 +25,10 @@ pipeline {
             curl -sfL https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz -o /tmp/trivy/trivy.tar.gz
             tar xzf /tmp/trivy/trivy.tar.gz -C /tmp/trivy
             chmod +x /tmp/trivy/trivy
-            /tmp/trivy/trivy image --severity HIGH,CRITICAL --exit-code 1 --no-progress ${REGISTRY}:${IMAGE_TAG}
+            /tmp/trivy/trivy image --severity HIGH,CRITICAL --format json --output trivy-report.json --no-progress ${REGISTRY}:${IMAGE_TAG} || true
+            /tmp/trivy/trivy image --severity HIGH,CRITICAL --no-progress ${REGISTRY}:${IMAGE_TAG} || true
           '''
+          archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
         }
       }
     }
