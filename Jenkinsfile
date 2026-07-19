@@ -8,7 +8,7 @@ pipeline {
     // Replace with your registry and credentials id in Jenkins
     // `dockerhub-creds` should be a Jenkins credential of type "Username with password".
     REGISTRY = "rohan2044/fortel-app"
-    IMAGE_TAG = "${env.BUILD_ID}"
+    IMAGE_TAG = "latest"
     TRIVY_VERSION = "0.72.0"
     KUBE_CONFIG_CREDENTIAL_ID = 'kubeconfig'
     KUBE_NAMESPACE = 'fortel'
