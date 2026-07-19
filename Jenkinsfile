@@ -1,7 +1,13 @@
+// Jenkins pipeline for building, scanning, and pushing the Fortel Docker image.
+// To trigger builds automatically, configure a GitHub webhook to Jenkins at:
+//   https://<JENKINS_HOST>/github-webhook/
+// Then enable "GitHub hook trigger for GITScm polling" in the Jenkins job.
+
 pipeline {
   agent any
   environment {
     // Replace with your registry and credentials id in Jenkins
+    // `dockerhub-creds` should be a Jenkins credential of type "Username with password".
     REGISTRY = "rohan2044/fortel-app"
     IMAGE_TAG = "${env.BUILD_ID}"
     TRIVY_VERSION = "0.72.0"
