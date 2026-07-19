@@ -66,7 +66,7 @@ pipeline {
               kubectl apply -f k8s/deployment.yaml -n ${KUBE_NAMESPACE}
               kubectl apply -f k8s/service.yaml -n ${KUBE_NAMESPACE}
               kubectl set image deployment/fortel-app fortel=${REGISTRY}:${IMAGE_TAG} -n ${KUBE_NAMESPACE} --record
-              kubectl rollout status deployment/fortel-app -n ${KUBE_NAMESPACE} --timeout=120s
+              kubectl rollout status deployment/fortel-app -n ${KUBE_NAMESPACE} --timeout=300s
             '''
           }
         }
