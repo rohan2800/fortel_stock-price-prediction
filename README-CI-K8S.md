@@ -27,6 +27,7 @@ Jenkins setup overview:
 5. Pipeline behavior:
    - The current `Jenkinsfile` builds the Docker image, scans it with Trivy, archives the scan report, and then pushes the image.
    - If you want Kubernetes deployment, update `k8s/deployment.yaml` image references or use `kubectl set image` from Jenkins.
+   - The Jenkinsfile can also deploy to Kubernetes automatically if the `kubeconfig` secret is available.
 6. Test the integration:
    - Push a commit to GitHub and verify Jenkins is triggered by the webhook.
    - Confirm the pipeline stages complete and the image is pushed successfully.
