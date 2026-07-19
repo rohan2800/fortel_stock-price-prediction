@@ -1,7 +1,6 @@
-// Jenkins pipeline for building, scanning, and pushing the Fortel Docker image.
-// To trigger builds automatically, configure a GitHub webhook to Jenkins at:
-//   https://<JENKINS_HOST>/github-webhook/
-// Then enable "GitHub hook trigger for GITScm polling" in the Jenkins job.
+// Jenkins pipeline for building, scanning, pushing, and optionally deploying the Fortel Docker image.
+// Webhook URL: https://<JENKINS_HOST>/github-webhook/
+// Ensure you create Jenkins credentials for Docker Hub and kubeconfig if you want Kubernetes deployment.
 
 pipeline {
   agent any
@@ -11,6 +10,8 @@ pipeline {
     REGISTRY = "rohan2044/fortel-app"
     IMAGE_TAG = "${env.BUILD_ID}"
     TRIVY_VERSION = "0.72.0"
+    KUBE_CONFIG_CREDENTIAL_ID = 'kubeconfig'
+    KUBE_NAMESPACE = 'default'
   }
   stages {
     stage('Checkout') {
@@ -50,6 +51,21 @@ pipeline {
           withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKERHUB_USER', passwordVariable: 'DOCKERHUB_PASS')]) {
             sh 'echo $DOCKERHUB_PASS | docker login -u $DOCKERHUB_USER --password-stdin'
             sh "docker push ${REGISTRY}:${IMAGE_TAG}"
+          }
+        }
+      }
+    }
+    stage('Deploy') {
+      steps {
+        script {
+          // Requires Jenkins secret file credential 'kubeconfig'
+          withCredentials([file(credentialsId: env.KUBE_CONFIG_CREDENTIAL_ID, variable: 'KUBECONFIG_FILE')]) {
+            sh '''
+              export KUBECONFIG="$KUBECONFIG_FILE"
+              kubectl apply -f k8s/deployment.yaml -n ${KUBE_NAMESPACE}
+              kubectl apply -f k8s/service.yaml -n ${KUBE_NAMESPACE}
+              kubectl rollout status deployment/fortel-app -n ${KUBE_NAMESPACE} --timeout=120s
+            '''
           }
         }
       }
