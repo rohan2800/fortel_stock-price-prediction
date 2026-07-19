@@ -19,8 +19,8 @@ spec:
     spec:
       containers:
       - name: fortel
-        # Replace image with your registry/image:tag
-        image: docker.io/your-docker-username/fortel_stock-price-prediction:latest
+        # Replace image with your registry/image:tag if needed
+        image: docker.io/rohan2044/fortel-app:latest
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 5000
