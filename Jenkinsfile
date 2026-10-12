@@ -19,9 +19,10 @@ pipeline {
     }
     stage('Build') {
       steps {
-        script {
-          def dockerImage = docker.build("${REGISTRY}:${IMAGE_TAG}")
-        }
+        sh '''
+            set -e
+            docker build -t rohan2044/fortel-app:latest .
+        '''
       }
     }
     stage('Scan') {
