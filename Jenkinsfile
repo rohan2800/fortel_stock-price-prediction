@@ -8,7 +8,8 @@ pipeline {
     // Replace with your registry and credentials id in Jenkins
     // `dockerhub-creds` should be a Jenkins credential of type "Username with password".
     REGISTRY = "rohan2044/fortel-app"
-    IMAGE_TAG = "latest"
+    // Unique per build, so every deploy has a new image tag and Kubernetes actually rolls out the change.
+    IMAGE_TAG = "${env.BUILD_NUMBER}"
     TRIVY_VERSION = "0.72.0"
     KUBE_CONFIG_CREDENTIAL_ID = 'kubeconfig'
     KUBE_NAMESPACE = 'fortel'
@@ -21,21 +22,25 @@ pipeline {
       steps {
         sh '''
             set -e
-            docker build -t rohan2044/fortel-app:latest .
+            docker build -t ${REGISTRY}:${IMAGE_TAG} -t ${REGISTRY}:latest .
         '''
       }
     }
     stage('Scan') {
       steps {
-        script {
-          sh '''
-            mkdir -p /tmp/trivy
-            curl -sfL https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz -o /tmp/trivy/trivy.tar.gz
-            tar xzf /tmp/trivy/trivy.tar.gz -C /tmp/trivy
-            chmod +x /tmp/trivy/trivy
-            /tmp/trivy/trivy image --severity HIGH,CRITICAL --format json --output trivy-report.json --no-progress ${REGISTRY}:${IMAGE_TAG} || true
-            /tmp/trivy/trivy image --severity HIGH,CRITICAL --no-progress ${REGISTRY}:${IMAGE_TAG} || true
-          '''
+        sh '''
+          mkdir -p /tmp/trivy
+          curl -sfL https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz -o /tmp/trivy/trivy.tar.gz
+          tar xzf /tmp/trivy/trivy.tar.gz -C /tmp/trivy
+          chmod +x /tmp/trivy/trivy
+          # Full JSON report for archiving (never fails the build on its own)
+          /tmp/trivy/trivy image --severity HIGH,CRITICAL --format json --output trivy-report.json --no-progress ${REGISTRY}:${IMAGE_TAG} || true
+          # Gate: fail the build on fixable HIGH/CRITICAL vulnerabilities
+          /tmp/trivy/trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress ${REGISTRY}:${IMAGE_TAG}
+        '''
+      }
+      post {
+        always {
           archiveArtifacts artifacts: 'trivy-report.json', allowEmptyArchive: true
         }
       }
@@ -52,6 +57,7 @@ pipeline {
           withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKERHUB_USER', passwordVariable: 'DOCKERHUB_PASS')]) {
             sh 'echo $DOCKERHUB_PASS | docker login -u $DOCKERHUB_USER --password-stdin'
             sh "docker push ${REGISTRY}:${IMAGE_TAG}"
+            sh "docker push ${REGISTRY}:latest"
           }
         }
       }
@@ -62,11 +68,13 @@ pipeline {
           // Requires Jenkins secret file credential 'kubeconfig'
           withCredentials([file(credentialsId: env.KUBE_CONFIG_CREDENTIAL_ID, variable: 'KUBECONFIG_FILE')]) {
             sh '''
+              set -e
               export KUBECONFIG="$KUBECONFIG_FILE"
+              # Point the manifest at this build's versioned image so `apply` triggers a rollout
+              sed -i "s|image: .*fortel-app:.*|image: docker.io/${REGISTRY}:${IMAGE_TAG}|" k8s/deployment.yaml
               kubectl apply -f k8s/namespace.yaml
               kubectl apply -f k8s/deployment.yaml -n ${KUBE_NAMESPACE}
               kubectl apply -f k8s/service.yaml -n ${KUBE_NAMESPACE}
-              kubectl set image deployment/fortel-app fortel=${REGISTRY}:${IMAGE_TAG} -n ${KUBE_NAMESPACE} --record
               kubectl rollout status deployment/fortel-app -n ${KUBE_NAMESPACE} --timeout=300s
             '''
           }

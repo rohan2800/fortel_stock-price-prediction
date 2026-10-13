@@ -5,7 +5,8 @@ keras
 numpy
 pandas
 matplotlib
-plotly
-kaleido
+# plotly 7.x requires kaleido>=1, which needs a Chrome install; pin the pair that exports PNGs without Chrome
+plotly==6.3.0
+kaleido==0.2.1
 yfinance
 scikit-learn

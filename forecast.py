@@ -1,219 +1,130 @@
-import numpy as np
-from keras.models import Sequential
-from keras.layers import LSTM, Dropout, Dense, GRU
-from keras.callbacks import ModelCheckpoint, EarlyStopping
-import keras
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('agg')
-import warnings
-import os
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+"""
+LSTM / GRU 30-day close-price forecasting for the Fortel app.
 
+- Prices are scaled to [0, 1] with a scaler fitted on the training slice only.
+- Each window is a sequence of 30 timesteps with 1 feature (look_back is the
+  time axis, not a feature list), which is what LSTM/GRU expect.
+- The forecast is seeded with the most recent 30 closes, so the first predicted
+  value is the day after the last known close.
+- EarlyStopping restores the best weights, so no checkpoint file is written.
+- Charts are returned as PNG bytes, so concurrent requests never share files.
+"""
+import io
+import os
+import warnings
+
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 warnings.filterwarnings('ignore')
 
-def format(series: np.array = np.array([]), look_back: int = 5):
-    """
-    Create a (X, Y) feature-output dataset for ML workflow
-    :param series: Numpy (1, ) array
-    :param look_back: The number of previous features to be considered for forecasting
-    :return: X and Y modelling parameters
-    """
-    X = []
-    Y = []
-    for n in range(len(series)):
-        k = n + look_back
-        if k >= len(series):
-            break
-        Xtn = series[n:k]
-        if len(Xtn) != look_back:
-            break
-        Ytn = series[k]
-        X.append(Xtn)
-        Y.append(Ytn)
-    return np.array(X), np.array(Y)
+import numpy as np
+from sklearn.preprocessing import MinMaxScaler
+from keras.models import Sequential
+from keras.layers import LSTM, GRU, Dropout, Dense
+from keras.callbacks import EarlyStopping
+from matplotlib.figure import Figure
 
-def lstm_prediction(stock_data,symbol):
-    print('Training phase')
-    model_filepath='lstm_model.keras'
-    plot_path=os.path.join('static','images','lstm.png')
-    # Calculate the mean of the 'Close' series
-    mean = np.mean(stock_data['Close'].values)
+LOOK_BACK = 30          # days of history per training window
+FORECAST_DAYS = 30      # days predicted ahead
+MIN_HISTORY = LOOK_BACK + 50
+TRAIN_FRACTION = 0.8    # share of history used to fit the scaler
+EPOCHS = 50
+BATCH_SIZE = 128
+UNITS = 512
+PLOT_HISTORY = 100      # historical points shown on the chart
 
-    # Adjust the series by downscaling it using the mean
-    adjusted_series = stock_data['Close'].values - mean
 
-        # Define the look-back period you want to use
-    look_back = 30  # This can be adjusted according to your needs
+def make_windows(series, look_back=LOOK_BACK):
+    """X[i] holds series[i:i+look_back]; y[i] is the value right after it."""
+    X, y = [], []
+    for i in range(len(series) - look_back):
+        X.append(series[i:i + look_back])
+        y.append(series[i + look_back])
+    return np.array(X), np.array(y)
 
-    # Format the adjusted series using the 'format' function
-    X, y = format(adjusted_series, look_back=look_back)
 
-    # Reshape the feature set (X) to be suitable for LSTM models
-    Xr = X.reshape((X.shape[0], 1, X.shape[1]))
-
-    # Create the Sequential model with a name
-    model = Sequential(name="Proposed_LSTM")
-    model.add(LSTM(units=512, activation='relu', input_shape=(1,look_back), return_sequences=True, name="input"))
+def build_model(cell, look_back=None, units=None):
+    look_back = look_back or LOOK_BACK
+    units = units or UNITS  # read at call time so the settings can be overridden
+    Layer = LSTM if cell == 'LSTM' else GRU
+    model = Sequential(name=f'Proposed_{cell}')
+    model.add(Layer(units, activation='tanh', input_shape=(look_back, 1), return_sequences=True))
     model.add(Dropout(0.2))
-    model.add(LSTM(units=512, activation='relu', name="lstm"))
+    model.add(Layer(units, activation='tanh'))
     model.add(Dropout(0.2))
-    model.add(Dense(1, name="output"))
+    model.add(Dense(1))
     model.compile(loss='mse', optimizer='adam')
+    return model
 
-    # Save the best model based on validation loss
-    checkpoint_callback = ModelCheckpoint(
-        filepath=model_filepath,
-        save_best_only=True,
-        monitor='val_loss',  # Metric to monitor
-        mode='min',  # Minimize the monitored metric
-        verbose=1  # Verbosity level
-    )
 
-    # Create an EarlyStopping callback to stop training when validation loss does not improve
-    early_stopping = EarlyStopping(
-        monitor='val_loss',  # Metric to monitor
-        mode='min',  # Minimize the monitored metric
-        patience=5,  # Number of epochs to wait before stopping if no progress
-        verbose=1  # Verbosity level
-    )
+def _forecast(model, scaled, look_back, days):
+    """Roll the model forward, feeding each prediction back in as the newest step."""
+    window = scaled[-look_back:].reshape(1, look_back, 1)
+    preds = []
+    for _ in range(days):
+        p = float(model.predict(window, verbose=0)[0, 0])
+        preds.append(p)
+        window = np.append(window[:, 1:, :], [[[p]]], axis=1)
+    return np.array(preds)
 
-    # Add the callbacks to a list
-    callbacks = [checkpoint_callback, early_stopping]
 
-    # Train the model
-    model.fit(Xr, y, epochs=50,  batch_size=128,  validation_split=0.2, callbacks=callbacks)
+def _plot(history, future, symbol, cell):
+    x_hist = np.arange(len(history))
+    x_fut = np.arange(len(history) - 1, len(history) + len(future))  # starts at last actual close
+    fut_vals = np.concatenate([[history[-1]], future])
 
-    #load model
-    model=keras.models.load_model(model_filepath)
-
-    days=30
-    mean_added_pred = []
-    x = Xr[-1]  # Initially take last training input for predicting its immediate next value
-
-    for i in range(days):
-      x = x.reshape((1, 1, look_back))  # Prepare the input for a tensorflow model using reshaping
-      prediction = model.predict(x, verbose=False)   # Predict the immediate next value
-      x = x.ravel()  # Ravel method converts the 3D array to single dimension array 
-      x = np.delete(x, 0)  # Now, we delete first item of the original input
-      x = np.append(x, prediction[0][0])  # and append the predicted value to use it for next predictions
-      mean_added_pred.append(prediction[0][0])   # append the predicted value to 'predictions' list
-
-    mean_added_pred+=mean
-    y+=mean
-    fig, ax = plt.subplots(figsize=(16, 8))
-
-# Plot the forecasted series and the original series
-    ax.plot(np.append(y[-100:], mean_added_pred), color='r', label="Forecasted series")
-    ax.plot(y[-100:], color='b', label="Original series")
-
-    # Set labels and legend
+    # Figure (not pyplot) keeps state per call, so threads don't share a current figure
+    fig = Figure(figsize=(16, 8))
+    ax = fig.subplots()
+    ax.plot(x_hist, history, color='b', label='Original series')
+    ax.plot(x_fut, fut_vals, color='r', label='Forecasted series')
     ax.set_ylabel(f"{symbol} closing price (Rs.)")
     ax.set_xlabel("Days")
     ax.legend()
-
-    # Set the title
-    ax.set_title(f"{symbol} Next 30-days forecast using LSTM")
-
-    # Add a grid to the plot
+    ax.set_title(f"{symbol} Next {FORECAST_DAYS}-days forecast using {cell}")
     ax.grid(True, color='gray', linestyle='--', linewidth=0.5)
 
-    # Save the figure to the specified path
-    fig.savefig(plot_path)
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png')
+    return buf.getvalue()
 
-    # Close the figure
-    plt.close(fig)
-    return plot_path
-    
 
-def gru_prediction(stock_data,symbol):
-    model_filepath='gru_model.keras'
-    plot_path=os.path.join('static', 'images', 'gru.png')
-    # Calculate the mean of the 'Close' series
-    mean = np.mean(stock_data['Close'].values)
+def _run(stock_data, symbol, cell, patience):
+    close = np.asarray(stock_data['Close'], dtype=float).ravel()
+    if len(close) < MIN_HISTORY:
+        raise ValueError(
+            f"Not enough price history for {symbol}: got {len(close)} days, need {MIN_HISTORY}."
+        )
 
-    # Adjust the series by downscaling it using the mean
-    adjusted_series = stock_data['Close'].values - mean
+    split = int(len(close) * TRAIN_FRACTION)
+    scaler = MinMaxScaler()
+    scaler.fit(close[:split].reshape(-1, 1))  # fit on training slice only
+    scaled = scaler.transform(close.reshape(-1, 1)).ravel()
 
-        # Define the look-back period you want to use
-    look_back = 30  # This can be adjusted according to your needs
+    X, y = make_windows(scaled)
+    X = X.reshape(-1, LOOK_BACK, 1)
 
-    # Format the adjusted series using the 'format' function
-    X, y = format(adjusted_series, look_back=look_back)
-
-    # Reshape the feature set (X) to be suitable for LSTM models
-    Xr = X.reshape((X.shape[0], 1, X.shape[1]))
-
-    # Create the Sequential model with a name
-    model = Sequential(name="Proposed_GRU")
-    model.add(GRU(units=512, activation='relu', input_shape=(1,look_back), return_sequences=True, name="input"))
-    model.add(Dropout(0.2))
-    model.add(GRU(units=512, activation='relu', name="gru"))
-    model.add(Dropout(0.2))
-    model.add(Dense(1, name="output"))
-    model.compile(loss='mse', optimizer='adam')
-
-    # Save the best model based on validation loss
-    checkpoint_callback = ModelCheckpoint(
-        filepath=model_filepath,
-        save_best_only=True,
-        monitor='val_loss',  # Metric to monitor
-        mode='min',  # Minimize the monitored metric
-        verbose=1  # Verbosity level
-    )
-
-    # Create an EarlyStopping callback to stop training when validation loss does not improve
+    model = build_model(cell)
     early_stopping = EarlyStopping(
-        monitor='val_loss',  # Metric to monitor
-        mode='min',  # Minimize the monitored metric
-        patience=10,  # Number of epochs to wait before stopping if no progress
-        verbose=1  # Verbosity level
+        monitor='val_loss', mode='min', patience=patience,
+        restore_best_weights=True, verbose=0,
     )
+    model.fit(X, y, epochs=EPOCHS, batch_size=BATCH_SIZE,
+              validation_split=0.2, callbacks=[early_stopping], verbose=0)
 
-    # Add the callbacks to a list
-    callbacks = [checkpoint_callback, early_stopping]
+    future_scaled = _forecast(model, scaled, LOOK_BACK, FORECAST_DAYS)
+    future = scaler.inverse_transform(future_scaled.reshape(-1, 1)).ravel()
 
-    # Train the model
-    model.fit(Xr, y, epochs=50,  batch_size=128,  validation_split=0.2, callbacks=callbacks)
+    png = _plot(close[-PLOT_HISTORY:], future, symbol, cell)
+    return png, future
 
-    #load model
-    model=keras.models.load_model(model_filepath)
 
-    days=30
-    mean_added_pred = []
-    x = Xr[-1]  # Initially take last training input for predicting its immediate next value
+def lstm_prediction(stock_data, symbol):
+    """Train an LSTM on the close prices; return the forecast chart as PNG bytes."""
+    png, _ = _run(stock_data, symbol, 'LSTM', patience=5)
+    return png
 
-    for i in range(days):
-      x = x.reshape((1, 1, look_back))  # Prepare the input for a tensorflow model using reshaping
-      prediction = model.predict(x, verbose=False)   # Predict the immediate next value
-      x = x.ravel()  # Ravel method converts the 3D array to single dimension array 
-      x = np.delete(x, 0)  # Now, we delete first item of the original input
-      x = np.append(x, prediction[0][0])  # and append the predicted value to use it for next predictions
-      mean_added_pred.append(prediction[0][0])   # append the predicted value to 'predictions' list
 
-    mean_added_pred+=mean
-    y+=mean
-    fig, ax = plt.subplots(figsize=(16, 8))
-
-# Plot the forecasted series and the original series
-    ax.plot(np.append(y[-100:], mean_added_pred), color='r', label="Forecasted series")
-    ax.plot(y[-100:], color='b', label="Original series")
-
-    # Set labels and legend
-    ax.set_ylabel(f"{symbol} closing price (Rs.)")
-    ax.set_xlabel("Days")
-    ax.legend()
-
-    # Set the title
-    ax.set_title(f"{symbol} Next 30-days forecast using GRU")
-
-    # Add a grid to the plot
-    ax.grid(True, color='gray', linestyle='--', linewidth=0.5)
-
-    # Save the figure to the specified path
-    fig.savefig(plot_path)
-
-    # Close the figure
-    plt.close(fig)
-    return plot_path
-    
+def gru_prediction(stock_data, symbol):
+    """Train a GRU on the close prices; return the forecast chart as PNG bytes."""
+    png, _ = _run(stock_data, symbol, 'GRU', patience=10)
+    return png
