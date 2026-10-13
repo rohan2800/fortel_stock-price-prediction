@@ -4,7 +4,6 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import os
-import mimetypes
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 import base64
@@ -16,25 +15,19 @@ from forecast import lstm_prediction, gru_prediction
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DOCS_DIR = os.path.join(BASE_DIR, 'Documents')
 
-# Charts are written to static/images; fresh containers don't have it (.dockerignore excludes it)
-os.makedirs(os.path.join('static', 'images'), exist_ok=True)
+def encode_png(png_bytes):
+    """Base64-encode PNG bytes for an inline <img> (charts are never written to disk)."""
+    return base64.b64encode(png_bytes).decode('utf-8')
 
-# encode function
-def encode_image(image_path):
-    mime_type, _ = mimetypes.guess_type(image_path)
-    if not mime_type:
-        mime_type = 'image/png'
-    with open(image_path, 'rb') as f:
-        image_data = f.read()
-    encoded_image = base64.b64encode(image_data).decode('utf-8')
-    return f'data:{mime_type};base64,{encoded_image}'
-    
 def get_stock_data(stock_symbol):
-    
-    stock_data = yf.download(stock_symbol.upper()+'.NS')
+    ticker = stock_symbol.upper() + '.NS'
+    stock_data = yf.download(ticker, progress=False)
+    if stock_data is None or stock_data.empty:
+        raise ValueError(f"No price data returned for {ticker}. Please try again later.")
+    # Recent yfinance returns (field, ticker) column pairs; keep just the field names
+    if isinstance(stock_data.columns, pd.MultiIndex):
+        stock_data.columns = stock_data.columns.get_level_values(0)
     return stock_data
-    
-    
 
 
 def filter_stock_data(stock_data, duration):
@@ -48,8 +41,7 @@ def filter_stock_data(stock_data, duration):
         return stock_data.iloc[-20:]
     elif duration.lower() == "year":
         return stock_data.iloc[-252:]
-    elif duration.lower() == "all":
-        return stock_data
+    return stock_data
 
 
 def calculate_ema(data, span):
@@ -66,8 +58,8 @@ def _ensure_series(value):
     return value
 
 def stock_plotter(stock_data,stock_symbol):
-   
-    plot_path=os.path.join("static","images","plot.jpg")
+    # Work on a copy: the indicator columns below are added to the frame
+    stock_data = stock_data.copy()
 
     close_col = _ensure_series(stock_data.loc[:,('Close')])
     ema_val = calculate_ema(close_col, span=10)
@@ -139,11 +131,8 @@ def stock_plotter(stock_data,stock_symbol):
     fig.update_yaxes(title_text="Price (₹)", row=3, col=1)
     fig.update_yaxes(title_text="Price (₹)", row=4, col=1)
 
-    '''# Save the figure '''
-    #fig.show()
-    print(plot_path)
-    fig.write_image(plot_path)
-    return plot_path
+    # Render to PNG bytes in memory (kaleido; no shared files between requests)
+    return fig.to_image(format='png')
 
 
 def extract_stock_symbol(option):
@@ -179,11 +168,15 @@ def main():
         stock_data = get_stock_data(stock_symbol)
         filtered_data = filter_stock_data(stock_data, duration)
         stock_plot=stock_plotter(filtered_data, stock_symbol)
-        print('Final Plot')
-        return render_template('index.html', options=options, plot=encode_image(stock_plot))
+        return render_template('index.html', options=options, plot=encode_png(stock_plot))
 
     return render_template('index.html', options=options)
 
+
+@app.errorhandler(ValueError)
+def bad_request(err):
+    # Bad symbol, missing data or too little history: show the message instead of a 500
+    return (str(err), 400)
 
 @app.route('/lstm', methods=['GET', 'POST'])
 def lstm():
@@ -191,11 +184,9 @@ def lstm():
     if  request.method == 'POST':
         stock_symbol = extract_stock_symbol(request.form.get('options'))
         stock_data = get_stock_data(stock_symbol)
-        print('Training Preview')
-        ##prediction
         lstm_plot=lstm_prediction(pd.DataFrame(stock_data),symbol=stock_symbol)
 
-        return render_template('lstm.html', plot=encode_image(lstm_plot) , options=options)
+        return render_template('lstm.html', plot=encode_png(lstm_plot), options=options)
 
     return render_template('lstm.html', options=options)
 
@@ -205,11 +196,9 @@ def gru():
     if  request.method == 'POST':
         stock_symbol = extract_stock_symbol(request.form.get('options'))
         stock_data = get_stock_data(stock_symbol)
-        print('Training Preview')
-        ##prediction
         gru_plot=gru_prediction(pd.DataFrame(stock_data),symbol=stock_symbol)
 
-        return render_template('gru.html', plot=encode_image(gru_plot) , options=options)
+        return render_template('gru.html', plot=encode_png(gru_plot), options=options)
 
     return render_template('gru.html', options=options)
 
