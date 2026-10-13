@@ -12,6 +12,13 @@ import matplotlib
 matplotlib.use('agg')
 from forecast import lstm_prediction, gru_prediction
 
+# Resolve bundled files relative to this file so they work in Docker (Linux) and locally
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DOCS_DIR = os.path.join(BASE_DIR, 'Documents')
+
+# Charts are written to static/images; fresh containers don't have it (.dockerignore excludes it)
+os.makedirs(os.path.join('static', 'images'), exist_ok=True)
+
 # encode function
 def encode_image(image_path):
     mime_type, _ = mimetypes.guess_type(image_path)
@@ -135,11 +142,7 @@ def stock_plotter(stock_data,stock_symbol):
     '''# Save the figure '''
     #fig.show()
     print(plot_path)
-    try:
-        fig.write_image(plot_path, engine='kaleido')
-    except Exception:
-        # fallback to default engine
-        fig.write_image(plot_path)
+    fig.write_image(plot_path)
     return plot_path
 
 
@@ -210,32 +213,36 @@ def gru():
 
     return render_template('gru.html', options=options)
 
+def _send_pdf(filename):
+    return send_file(os.path.join(DOCS_DIR, filename), mimetype='application/pdf')
+
 @app.route('/paper')
 def paper():
-    return send_file('Documents\IJARCCE_reserch paper.pdf', mimetype='application/pdf')
+    return _send_pdf('IJARCCE_reserch paper.pdf')
+
 @app.route('/Certificate')
 def certificate():
     return render_template('certificates.html')
 
 @app.route('/Certificate/rohan')
 def rohan():
-    return send_file('Documents\Rohan Waghmare.pdf', mimetype='application/pdf')
+    return _send_pdf('Rohan Waghmare.pdf')
 
 @app.route('/Certificate/YC')
 def yashC():
-    return send_file('Documents\Yash Chougale.pdf', mimetype='application/pdf')
+    return _send_pdf('Yash Chougale.pdf')
 
 @app.route('/Certificate/YK')
 def yashK():
-    return send_file('Documents\Yash Kashid.pdf', mimetype='application/pdf')
+    return _send_pdf('Yash Kashid.pdf')
 
 @app.route('/Certificate/YD')
 def yashD():
-    return send_file('Documents\Yashodhan Darekar.pdf', mimetype='application/pdf')
+    return _send_pdf('Yashodhan Darekar.pdf')
 
 @app.route('/Certificate/RR')
 def rahulR():
-    return send_file('Documents\Rahul Rote.pdf', mimetype='application/pdf')
+    return _send_pdf('Rahul Rote.pdf')
 
 # Health endpoints used by k8s probes
 @app.route('/health')

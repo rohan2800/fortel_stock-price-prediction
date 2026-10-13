@@ -43,5 +43,7 @@ USER appuser
 
 EXPOSE 5000
 
-# Use gunicorn for production-like server
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app", "--workers", "2"]
+# Use gunicorn for production-like server.
+# Model training takes minutes, so allow long requests (default 30s kills the worker mid-training).
+# gthread workers keep serving /health while a training request is running.
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "app:app", "--workers", "2", "--worker-class", "gthread", "--threads", "4", "--timeout", "300"]
