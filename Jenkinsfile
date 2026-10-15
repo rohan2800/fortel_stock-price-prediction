@@ -10,9 +10,7 @@ pipeline {
     options {
         timestamps()
         disableConcurrentBuilds()
-        buildDiscarder(logRotator(
-            numToKeepStr: '20'
-        ))
+        buildDiscarder(logRotator(numToKeepStr: '20'))
         timeout(time: 60, unit: 'MINUTES')
     }
 
@@ -25,9 +23,7 @@ pipeline {
 
     stages {
 
-        // =========================================
-        // 1. CHECKOUT SOURCE CODE
-        // =========================================
+        // 1. CHECKOUT
         stage('Checkout') {
             steps {
                 checkout scm
@@ -38,42 +34,33 @@ pipeline {
 
                 sh '''
                     set -eu
+
                     echo "===== Git Commit ====="
                     git log -1 --oneline
-
-                    echo "===== Git Status ====="
-                    git status --short
 
                     echo "===== Build Information ====="
                     echo "Image: ${IMAGE}"
                     echo "Tag: ${IMAGE_TAG}"
-                    echo "Workspace: ${WORKSPACE}"
                 '''
             }
         }
 
-        // =========================================
         // 2. BUILD DOCKER IMAGE
-        // =========================================
         stage('Build Docker Image') {
             steps {
                 sh '''
                     set -eu
 
-                    echo "===== Build Docker Image ====="
+                    echo "===== Build Versioned Image ====="
 
-                    docker build \
-                        --pull \
-                        --tag "${IMAGE}:${IMAGE_TAG}" \
-                        .
+                    docker build --pull \
+                        -t "${IMAGE}:${IMAGE_TAG}" .
 
-                    echo "===== Create Latest Tag ====="
+                    echo "===== Tag Image as Latest ====="
 
                     docker tag \
                         "${IMAGE}:${IMAGE_TAG}" \
                         "${IMAGE}:latest"
-
-                    echo "===== Verify Image Tags ====="
 
                     docker image inspect "${IMAGE}:${IMAGE_TAG}" >/dev/null
                     docker image inspect "${IMAGE}:latest" >/dev/null
@@ -83,22 +70,20 @@ pipeline {
             }
         }
 
-        // =========================================
-        // 3. VALIDATE PYTHON APPLICATION
-        // =========================================
+        // 3. PYTHON VALIDATION
         stage('Validate Application') {
             steps {
                 sh '''
                     set -eu
 
-                    echo "===== Python Syntax Validation ====="
+                    echo "===== Validate Python Syntax ====="
 
                     docker run --rm \
                         --entrypoint python \
                         "${IMAGE}:${IMAGE_TAG}" \
                         -m compileall -q app.py forecast.py
 
-                    echo "===== Docker Image Validation ====="
+                    echo "===== Validate Image ====="
 
                     docker image inspect "${IMAGE}:${IMAGE_TAG}" \
                         --format 'Image ID: {{.Id}}'
@@ -108,9 +93,7 @@ pipeline {
             }
         }
 
-        // =========================================
         // 4. TRIVY SECURITY SCAN
-        // =========================================
         stage('Trivy Security Scan') {
             steps {
                 script {
@@ -123,15 +106,17 @@ pipeline {
                             mkdir -p "${TMPDIR}"
                             chmod 700 "${TMPDIR}"
 
-                            TRIVY_DIR="${TMPDIR}/trivy-jenkins-${BUILD_NUMBER}"
+                            TRIVY_DIR="${TMPDIR}/trivy-${BUILD_NUMBER}"
                             mkdir -p "${TRIVY_DIR}"
                             chmod 700 "${TRIVY_DIR}"
 
-                            echo "===== Download Trivy ${TRIVY_VERSION} ====="
+                            trap 'rm -rf "${TRIVY_DIR}"' EXIT
+
+                            echo "===== Download Trivy ====="
 
                             curl --fail --silent --show-error --location \
                                 "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
-                                --output "${TRIVY_DIR}/trivy.tar.gz"
+                                -o "${TRIVY_DIR}/trivy.tar.gz"
 
                             tar -xzf "${TRIVY_DIR}/trivy.tar.gz" \
                                 -C "${TRIVY_DIR}" trivy
@@ -141,7 +126,7 @@ pipeline {
                             echo "===== Trivy Version ====="
                             "${TRIVY_DIR}/trivy" --version
 
-                            echo "===== Scan Docker Image ====="
+                            echo "===== Scan Image ====="
 
                             "${TRIVY_DIR}/trivy" image \
                                 --cache-dir "${WORKSPACE}/.trivy-cache" \
@@ -157,31 +142,22 @@ pipeline {
                         '''
                     } catch (err) {
                         scanStatus = 1
-                        echo "Trivy scan reported failure or encountered an error: ${err}"
+                        echo "Security scan failed: ${err}"
                     } finally {
                         archiveArtifacts(
                             artifacts: 'trivy-report.json',
                             allowEmptyArchive: true
                         )
-
-                        sh '''
-                            rm -rf "${TMPDIR}/trivy-jenkins-${BUILD_NUMBER}" \
-                                || true
-                        '''
                     }
 
                     if (scanStatus != 0) {
-                        error(
-                            'Trivy scan failed. Review the archived report and console output.'
-                        )
+                        error('Trivy scan failed. Check the report and console logs.')
                     }
                 }
             }
         }
 
-        // =========================================
-        // 5. PUSH IMAGE TO DOCKER HUB
-        // =========================================
+        // 5. PUSH TO DOCKER HUB
         stage('Push Image to Docker Hub') {
             steps {
                 withCredentials([
@@ -203,33 +179,19 @@ pipeline {
 
                         trap 'docker logout >/dev/null 2>&1 || true' EXIT
 
-                        echo "===== Verify Versioned Image ====="
-
-                        docker image inspect "${IMAGE}:${IMAGE_TAG}" >/dev/null
-
-                        echo "===== Ensure Latest Tag Exists ====="
-
-                        docker tag \
-                            "${IMAGE}:${IMAGE_TAG}" \
-                            "${IMAGE}:latest"
-
                         echo "===== Push Versioned Image ====="
-
                         docker push "${IMAGE}:${IMAGE_TAG}"
 
                         echo "===== Push Latest Image ====="
-
                         docker push "${IMAGE}:latest"
 
-                        echo "===== Docker Hub Push Completed ====="
+                        echo "Docker Hub push completed."
                     '''
                 }
             }
         }
 
-        // =========================================
         // 6. DEPLOY TO KUBERNETES
-        // =========================================
         stage('Deploy to Kubernetes') {
             steps {
                 withCredentials([
@@ -246,7 +208,7 @@ pipeline {
                         echo "===== Kubernetes Context ====="
                         kubectl config current-context
 
-                        echo "===== Validate Cluster Access ====="
+                        echo "===== Validate Cluster ====="
                         kubectl cluster-info
                         kubectl get nodes
 
@@ -257,41 +219,65 @@ pipeline {
                         kubectl apply -f k8s/deployment.yaml
                         kubectl apply -f k8s/service.yaml
 
-                        echo "===== Set Exact Versioned Image ====="
+                        echo "===== Find Actual Container Name ====="
+
+                        CONTAINER_NAME="$(
+                            kubectl get deployment fortel-app \
+                                -n "${KUBE_NAMESPACE}" \
+                                -o jsonpath='{.spec.template.spec.containers[0].name}'
+                        )"
+
+                        if [ -z "${CONTAINER_NAME}" ]; then
+                            echo "ERROR: No container found in deployment fortel-app."
+                            exit 1
+                        fi
+
+                        echo "Container name: ${CONTAINER_NAME}"
+
+                        echo "===== Update Versioned Image ====="
+
                         kubectl set image \
                             deployment/fortel-app \
-                            fortel-app="${IMAGE}:${IMAGE_TAG}" \
-                            --namespace="${KUBE_NAMESPACE}"
+                            "${CONTAINER_NAME}=${IMAGE}:${IMAGE_TAG}" \
+                            -n "${KUBE_NAMESPACE}"
 
-                        echo "===== Verify Deployment Image ====="
-                        kubectl get deployment fortel-app \
-                            --namespace="${KUBE_NAMESPACE}" \
-                            -o jsonpath='{.spec.template.spec.containers[?(@.name=="fortel-app")].image}'
+                        echo "===== Verify Configured Image ====="
 
-                        echo
+                        ACTUAL_IMAGE="$(
+                            kubectl get deployment fortel-app \
+                                -n "${KUBE_NAMESPACE}" \
+                                -o jsonpath='{.spec.template.spec.containers[0].image}'
+                        )"
+
+                        echo "Expected image: ${IMAGE}:${IMAGE_TAG}"
+                        echo "Actual image:   ${ACTUAL_IMAGE}"
+
+                        if [ "${ACTUAL_IMAGE}" != "${IMAGE}:${IMAGE_TAG}" ]; then
+                            echo "ERROR: Deployment image does not match the build tag."
+                            exit 1
+                        fi
 
                         echo "===== Wait for Rollout ====="
 
                         if ! kubectl rollout status \
                             deployment/fortel-app \
-                            --namespace="${KUBE_NAMESPACE}" \
+                            -n "${KUBE_NAMESPACE}" \
                             --timeout=300s; then
 
                             echo "===== Deployment Diagnostics ====="
 
                             kubectl get deployments,pods,services \
-                                --namespace="${KUBE_NAMESPACE}" -o wide || true
+                                -n "${KUBE_NAMESPACE}" -o wide || true
 
                             kubectl describe deployment fortel-app \
-                                --namespace="${KUBE_NAMESPACE}" || true
+                                -n "${KUBE_NAMESPACE}" || true
 
                             kubectl get events \
-                                --namespace="${KUBE_NAMESPACE}" \
+                                -n "${KUBE_NAMESPACE}" \
                                 --sort-by='.lastTimestamp' || true
 
-                            kubectl logs \
-                                deployment/fortel-app \
-                                --namespace="${KUBE_NAMESPACE}" \
+                            kubectl logs deployment/fortel-app \
+                                -n "${KUBE_NAMESPACE}" \
                                 --all-containers=true \
                                 --tail=150 || true
 
@@ -301,7 +287,7 @@ pipeline {
                         echo "===== Final Deployment Status ====="
 
                         kubectl get deployment,pods,services \
-                            --namespace="${KUBE_NAMESPACE}" -o wide
+                            -n "${KUBE_NAMESPACE}" -o wide
 
                         echo "===== Deployment Successful ====="
                     '''
@@ -310,37 +296,32 @@ pipeline {
         }
     }
 
-    // =============================================
-    // POST-BUILD ACTIONS
-    // =============================================
     post {
         success {
             echo """
-            =========================================
+            ========================================
             FORTEL CI/CD PIPELINE SUCCESSFUL
-            =========================================
+            ========================================
             Build Number : ${env.BUILD_NUMBER}
-            Docker Image : ${env.IMAGE}:${env.BUILD_NUMBER}
-            Latest Image : ${env.IMAGE}:latest
+            Image        : ${env.IMAGE}:${env.BUILD_NUMBER}
             Namespace    : ${env.KUBE_NAMESPACE}
-            =========================================
+            ========================================
             """
         }
 
         failure {
             echo """
-            =========================================
+            ========================================
             FORTEL CI/CD PIPELINE FAILED
-            =========================================
+            ========================================
             Build Number : ${env.BUILD_NUMBER}
-            Review the failed stage in the Jenkins
-            console output before retrying.
-            =========================================
+            Check the failed stage in the console.
+            ========================================
             """
         }
 
         always {
-            echo "Pipeline finished: ${currentBuild.currentResult}"
+            echo "Pipeline result: ${currentBuild.currentResult}"
         }
     }
 }
