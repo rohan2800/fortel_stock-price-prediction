@@ -30,7 +30,11 @@ RUN apt-get update \
 # Copy built wheels from builder and install without rebuilding
 COPY --from=builder /wheels /wheels
 COPY requirements.txt ./
+
 RUN pip install --no-index --find-links=/wheels -r requirements.txt \
+    && pip install --no-cache-dir --upgrade \
+       "setuptools>=80.10.1" \
+       "wheel>=0.46.2" \
     && rm -rf /wheels
 
 # Copy the application code (Dockerfile .dockerignore excludes large artifacts)
