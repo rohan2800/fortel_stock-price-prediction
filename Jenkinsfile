@@ -3,6 +3,7 @@
 // Ensure you create Jenkins credentials for Docker Hub and kubeconfig if you want Kubernetes deployment.
 
 
+
 pipeline {
     agent any
 
@@ -15,7 +16,6 @@ pipeline {
 
     environment {
         IMAGE = 'rohan2044/fortel-app'
-        IMAGE_TAG = "${BUILD_NUMBER}"
         KUBE_NAMESPACE = 'fortel'
         TRIVY_VERSION = '0.72.0'
     }
@@ -24,15 +24,13 @@ pipeline {
 
         stage('Checkout') {
             steps {
-                echo 'Checking out source code...'
                 checkout scm
 
                 sh '''
                     set -eu
-                    echo "Current commit:"
-                    git rev-parse --short HEAD
 
-                    echo "Repository status:"
+                    echo "===== Git Information ====="
+                    git log -1 --oneline
                     git status --short
                 '''
             }
@@ -40,110 +38,150 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                echo 'Building the Fortel application image...'
-
                 sh '''
                     set -eu
 
-                    docker build \
-                        --pull \
+                    IMAGE_TAG="${BUILD_NUMBER}"
+
+                    echo "===== Building Docker Image ====="
+                    echo "Image: ${IMAGE}:${IMAGE_TAG}"
+
+                    docker build --pull \
                         -t "${IMAGE}:${IMAGE_TAG}" \
                         -t "${IMAGE}:latest" \
                         .
                 '''
-
-                echo 'Docker image build completed.'
             }
         }
 
-        stage('Test') {
+        stage('Validate Application Image') {
             steps {
-                echo 'Checking Python source syntax...'
-
                 sh '''
                     set -eu
+
+                    IMAGE_TAG="${BUILD_NUMBER}"
+
+                    echo "===== Validating Python Syntax ====="
 
                     docker run --rm \
                         --entrypoint python \
                         "${IMAGE}:${IMAGE_TAG}" \
                         -m compileall -q app.py forecast.py
 
-                    docker image inspect "${IMAGE}:${IMAGE_TAG}" \
-                        >/dev/null
+                    echo "===== Checking Image Metadata ====="
 
-                    echo "Python syntax and Docker image checks passed."
+                    docker image inspect \
+                        "${IMAGE}:${IMAGE_TAG}" \
+                        --format 'Image ID: {{.Id}}'
+
+                    echo "Application image validation passed."
                 '''
             }
         }
 
         stage('Security Scan - Trivy') {
             steps {
-                echo 'Scanning the image for fixable HIGH and CRITICAL vulnerabilities...'
-
                 sh '''
                     set -eu
 
-                    TRIVY_DIR="/tmp/trivy-${BUILD_TAG}"
-                    mkdir -p "$TRIVY_DIR"
+                    # Use the larger Jenkins filesystem instead of /tmp.
+                    export TMPDIR=/var/lib/jenkins/tmp
 
+                    IMAGE_TAG="${BUILD_NUMBER}"
+                    TRIVY_DIR="${TMPDIR}/trivy-jenkins-${BUILD_NUMBER}"
+
+                    mkdir -p "${TRIVY_DIR}"
+
+                    echo "===== Trivy Security Scan ====="
+                    echo "Temporary directory: ${TMPDIR}"
+                    echo "Image: ${IMAGE}:${IMAGE_TAG}"
+
+                    # Download a pinned Trivy release.
                     curl -fsSL \
                         "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
-                        -o "$TRIVY_DIR/trivy.tar.gz"
+                        -o "${TRIVY_DIR}/trivy.tar.gz"
 
-                    tar -xzf "$TRIVY_DIR/trivy.tar.gz" \
-                        -C "$TRIVY_DIR" trivy
+                    tar -xzf "${TRIVY_DIR}/trivy.tar.gz" \
+                        -C "${TRIVY_DIR}" trivy
 
-                    chmod +x "$TRIVY_DIR/trivy"
+                    chmod +x "${TRIVY_DIR}/trivy"
 
-                    "$TRIVY_DIR/trivy" image \
-                        --cache-dir "$WORKSPACE/.trivy-cache" \
+                    # Save a JSON report even if the scan finds vulnerabilities.
+                    set +e
+                    "${TRIVY_DIR}/trivy" image \
+                        --cache-dir "${WORKSPACE}/.trivy-cache" \
                         --timeout 20m \
                         --scanners vuln \
                         --severity HIGH,CRITICAL \
                         --ignore-unfixed \
                         --format json \
-                        --output trivy-report.json \
+                        --output "${WORKSPACE}/trivy-report.json" \
                         --exit-code 1 \
                         --no-progress \
                         "${IMAGE}:${IMAGE_TAG}"
+                    SCAN_EXIT_CODE=$?
+                    set -e
+
+                    if [ -f "${WORKSPACE}/trivy-report.json" ]; then
+                        echo "Trivy JSON report generated."
+                    else
+                        echo "ERROR: Trivy did not generate a report."
+                        exit 2
+                    fi
+
+                    if [ "${SCAN_EXIT_CODE}" -ne 0 ]; then
+                        echo "ERROR: Trivy scan failed or detected HIGH/CRITICAL vulnerabilities."
+                        exit "${SCAN_EXIT_CODE}"
+                    fi
+
+                    echo "Trivy scan passed."
                 '''
             }
-
             post {
                 always {
                     archiveArtifacts(
                         artifacts: 'trivy-report.json',
-                        allowEmptyArchive: true
+                        allowEmptyArchive: true,
+                        fingerprint: true
                     )
+
+                    sh '''
+                        rm -rf "/var/lib/jenkins/tmp/trivy-jenkins-${BUILD_NUMBER}" || true
+                    '''
                 }
             }
         }
 
-        stage('Push to Docker Hub') {
+        stage('Push Image to Docker Hub') {
             steps {
-                echo 'Authenticating with Docker Hub and pushing images...'
-
                 withCredentials([
                     usernamePassword(
                         credentialsId: 'dockerhub-creds',
-                        usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
+                        usernameVariable: 'DOCKERHUB_USERNAME',
+                        passwordVariable: 'DOCKERHUB_PASSWORD'
                     )
                 ]) {
                     sh '''
                         set -eu
 
-                        trap 'docker logout >/dev/null 2>&1 || true' EXIT
+                        IMAGE_TAG="${BUILD_NUMBER}"
 
-                        printf '%s' "$DOCKER_PASS" |
+                        echo "===== Docker Hub Login ====="
+
+                        trap 'docker logout || true' EXIT
+
+                        printf '%s' "${DOCKERHUB_PASSWORD}" |
                             docker login \
-                                --username "$DOCKER_USER" \
+                                --username "${DOCKERHUB_USERNAME}" \
                                 --password-stdin
 
+                        echo "===== Pushing Versioned Image ====="
                         docker push "${IMAGE}:${IMAGE_TAG}"
+
+                        echo "===== Pushing Latest Image ====="
                         docker push "${IMAGE}:latest"
 
-                        echo "Both image tags were pushed successfully."
+                        echo "Docker image push completed."
                     '''
                 }
             }
@@ -151,8 +189,6 @@ pipeline {
 
         stage('Deploy to Kubernetes') {
             steps {
-                echo 'Deploying the image to the Fortel Kubernetes namespace...'
-
                 withCredentials([
                     file(
                         credentialsId: 'kubeconfig',
@@ -162,53 +198,62 @@ pipeline {
                     sh '''
                         set -eu
 
-                        export KUBECONFIG="$KUBECONFIG_FILE"
+                        IMAGE_TAG="${BUILD_NUMBER}"
+                        export KUBECONFIG="${KUBECONFIG_FILE}"
 
-                        echo "Checking Kubernetes connectivity..."
+                        echo "===== Kubernetes Context ====="
+                        kubectl config current-context
                         kubectl cluster-info
-                        kubectl get nodes
 
-                        echo "Applying the namespace..."
+                        echo "===== Apply Namespace ====="
                         kubectl apply -f k8s/namespace.yaml
 
-                        echo "Preparing the deployment manifest..."
-                        sed -E \
-                            "s#(^[[:space:]]*image:[[:space:]]*).+#\\1docker.io/${IMAGE}:${IMAGE_TAG}#" \
-                            k8s/deployment.yaml \
-                            > "$WORKSPACE/deployment-ci.yaml"
+                        echo "===== Update Deployment Image ====="
+                        kubectl set image \
+                            deployment/fortel-app \
+                            fortel-app="${IMAGE}:${IMAGE_TAG}" \
+                            --namespace="${KUBE_NAMESPACE}"
 
-                        echo "Applying Kubernetes resources..."
-                        kubectl apply -f "$WORKSPACE/deployment-ci.yaml"
-                        kubectl apply -f k8s/service.yaml
+                        echo "===== Apply Kubernetes Manifests ====="
+                        kubectl apply \
+                            -f k8s/deployment.yaml \
+                            -f k8s/service.yaml \
+                            --namespace="${KUBE_NAMESPACE}"
 
-                        echo "Waiting for the deployment rollout..."
+                        echo "===== Wait for Deployment Rollout ====="
+
                         if ! kubectl rollout status \
                             deployment/fortel-app \
-                            -n "$KUBE_NAMESPACE" \
+                            --namespace="${KUBE_NAMESPACE}" \
                             --timeout=300s; then
 
-                            echo "Deployment rollout failed. Collecting diagnostics..."
+                            echo "===== Deployment Diagnostics ====="
 
-                            kubectl get pods \
-                                -n "$KUBE_NAMESPACE" -o wide || true
+                            kubectl get deployments,pods,services \
+                                --namespace="${KUBE_NAMESPACE}" -o wide || true
 
-                            kubectl describe deployment/fortel-app \
-                                -n "$KUBE_NAMESPACE" || true
+                            kubectl describe deployment fortel-app \
+                                --namespace="${KUBE_NAMESPACE}" || true
 
                             kubectl get events \
-                                -n "$KUBE_NAMESPACE" \
-                                --sort-by=.lastTimestamp || true
+                                --namespace="${KUBE_NAMESPACE}" \
+                                --sort-by='.lastTimestamp' || true
+
+                            kubectl logs \
+                                deployment/fortel-app \
+                                --namespace="${KUBE_NAMESPACE}" \
+                                --all-containers=true \
+                                --tail=100 || true
 
                             exit 1
                         fi
 
-                        echo "Deployment completed successfully."
+                        echo "===== Final Kubernetes Status ====="
 
-                        kubectl get deployment,service \
-                            -n "$KUBE_NAMESPACE"
+                        kubectl get deployments,pods,services \
+                            --namespace="${KUBE_NAMESPACE}" -o wide
 
-                        kubectl get pods \
-                            -n "$KUBE_NAMESPACE" -o wide
+                        echo "Kubernetes deployment completed."
                     '''
                 }
             }
@@ -217,12 +262,11 @@ pipeline {
 
     post {
         success {
-            echo 'SUCCESS: Fortel pipeline completed successfully.'
-            echo 'Docker image was scanned, pushed, and deployed.'
+            echo 'SUCCESS: Build, validation, security scan, image push, and Kubernetes deployment completed.'
         }
 
         failure {
-            echo 'FAILURE: The pipeline failed. Check the failed stage logs.'
+            echo 'FAILURE: Pipeline failed. Review the stage logs and archived Trivy report.'
         }
 
         always {
